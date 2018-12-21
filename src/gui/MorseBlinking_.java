@@ -57,10 +57,29 @@ public class MorseBlinking_ implements PlugIn {
     static final double[] _8 = new double[]{100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 0};
     static final double[] _9 = new double[]{100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100};
     static final double[] _0 = new double[]{100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100};
+    static final double[] period = new double[]{100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] comma = new double[]{100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100};
+    static final double[] question = new double[]{100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100};
+    static final double[] apostrophe = new double[]{100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100};
+    static final double[] exclamation = new double[]{100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100};
+    static final double[] slash = new double[]{100, 100, 100, 0, 100, 0, 100, 0, 100, 100, 100, 0, 100};
+    static final double[] openBracket = new double[]{100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100};
+    static final double[] closedBracket = new double[]{100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] ampersand = new double[]{100, 0, 100, 100, 100, 0, 100, 0, 100, 0, 100};
+    static final double[] colon = new double[]{100, 100, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 0, 100};
+    static final double[] semicolon = new double[]{100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100};
+    static final double[] equals = new double[]{100, 100, 100, 0, 100, 0, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] plus = new double[]{100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100};
+    static final double[] minus = new double[]{100, 100, 100, 0, 100, 0, 100, 0, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] underscore = new double[]{100, 0, 100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] dollar = new double[]{100, 0, 100, 0, 100, 0, 100, 100, 100, 0, 100, 0, 100, 0, 100, 100, 100};
+    static final double[] at = new double[]{100, 0, 100, 100, 100, 0, 100, 100, 100, 0, 100, 0, 100, 100, 100, 0, 100};
 
     String message;
     LinkedHashMap<String, double[]> dict;
     ArrayList<String> swearDictionary;
+    ArrayList<String> emojiDictionary;
+
     String[] titles;
 
     Random rand = new Random();
@@ -68,6 +87,8 @@ public class MorseBlinking_ implements PlugIn {
 
     public void setupDialog(){
         gd = new NonBlockingGenericDialog("Inspector Morse");
+        gd.addMessage("you can put spaces, line breaks, numbers and punctuation in");
+        gd.addMessage("(numbers and punctuations will give you hella big stacks though. you've been warned.)");
         gd.addTextAreas("Message to blink", null, 10, 50);
     }
 
@@ -83,6 +104,20 @@ public class MorseBlinking_ implements PlugIn {
         for(int i=0; i<swearDictionary.size(); i++){
             if(message.contains(swearDictionary.get(i))){
                 IJ.log("oooh you dirty bastard");
+                break;
+            }
+        }
+
+        populateEmojiDictionary();
+        for(int i=0; i<3; i++){
+            if(message.contains(emojiDictionary.get(i))){
+                IJ.log("cheer up, i still love you!");
+                break;
+            }
+        }
+        for(int i=3; i<6; i++){
+            if(message.contains(emojiDictionary.get(i))){
+                IJ.log("glad that you're having a good time!");
                 break;
             }
         }
@@ -278,6 +313,23 @@ public class MorseBlinking_ implements PlugIn {
         dict.put("7", _7);
         dict.put("8", _8);
         dict.put("9", _9);
+        dict.put(".", period);
+        dict.put(",", comma);
+        dict.put("?", question);
+        dict.put("'", apostrophe);
+        dict.put("!", exclamation);
+        dict.put("/", slash);
+        dict.put("(", openBracket);
+        dict.put(")", closedBracket);
+        dict.put("&", ampersand);
+        dict.put(":", colon);
+        dict.put(";", semicolon);
+        dict.put("=", equals);
+        dict.put("+", plus);
+        dict.put("-", minus);
+        dict.put("_", underscore);
+        dict.put("$", dollar);
+        dict.put("@", at);
         return;
     }
 
@@ -307,6 +359,16 @@ public class MorseBlinking_ implements PlugIn {
         swearDictionary.add("bollocks");
         swearDictionary.add("Bollocks");
         swearDictionary.add("BOLLOCKS");
+    }
+
+    public void populateEmojiDictionary(){
+        emojiDictionary = new ArrayList<String>();
+        emojiDictionary.add(":-(");
+        emojiDictionary.add(":(");
+        emojiDictionary.add("=(");
+        emojiDictionary.add(":-)");
+        emojiDictionary.add(":)");
+        emojiDictionary.add("=)");
     }
 
     public void getListOfTitles(){
