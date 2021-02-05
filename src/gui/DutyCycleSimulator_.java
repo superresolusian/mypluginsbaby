@@ -1,18 +1,24 @@
 package gui;
 
-import ij.IJ;
-import ij.ImagePlus;
-import ij.ImageStack;
-import ij.WindowManager;
+import ij.*;
+import ij.gui.GenericDialog;
 import ij.gui.NonBlockingGenericDialog;
 import ij.measure.Calibration;
+import ij.plugin.Binner;
 import ij.process.FloatProcessor;
+import org.apache.commons.math3.distribution.GammaDistribution;
 import org.apache.commons.math3.random.RandomDataGenerator;
 
+import java.awt.*;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Random;
+
+import static ij.plugin.Binner.*;
+import static org.apache.commons.math3.special.Gamma.gamma;
+import static org.apache.commons.math3.special.Gamma.regularizedGammaP;
 
 public class DutyCycleSimulator_ extends _Dialog_{
 
@@ -26,6 +32,7 @@ public class DutyCycleSimulator_ extends _Dialog_{
     String fluorophore, buffer;
     int experimentLength, frameDuration;
     double wavelength, photons, dutyCycle, survivalFraction, pixelSizeGT;
+    boolean doNMolecules;
 
     int w, h;
     int xc, yc;
@@ -34,6 +41,7 @@ public class DutyCycleSimulator_ extends _Dialog_{
 
     Random random = new Random();
     RandomDataGenerator rnd = new RandomDataGenerator();
+    private double pixelSizeCamera, gain, base, sensitivity, readNoise, background;
 
     @Override
     public boolean beforeSetupDialog(String arg) {
@@ -61,6 +69,15 @@ public class DutyCycleSimulator_ extends _Dialog_{
         gd.addNumericField("Frame duration (milliseconds)", getPrefs("frameDuration", 30), 0);
         gd.addChoice("Ground truth binary image to simulate", windowTitles, defaultIm);
         gd.addNumericField("GT pixel size in nm (if providing own image)", getPrefs("pixelSizeGT", 10), 0);
+        gd.addCheckbox("GT intensity is number of molecules", getPrefs("doNMolecules", true));
+        gd.addNumericField("Non-blinking fluorescence background", getPrefs("background", 100), 0);
+
+        gd.addMessage("Camera settings");
+        gd.addNumericField("Camera pixel size (nm)", getPrefs("pixelSizeCamera", 100), 0);
+        gd.addNumericField("EM gain", getPrefs("gain", 100), 0);
+        gd.addNumericField("Read noise", getPrefs("readNoise", 0), 0);
+        gd.addNumericField("Photoelectrons per a/d count", getPrefs("sensitivity", 12.6), 1);
+        gd.addNumericField("Base level a/d counts", getPrefs("base", 100), 0);
 
     }
 
@@ -72,12 +89,28 @@ public class DutyCycleSimulator_ extends _Dialog_{
         frameDuration = (int) gd.getNextNumber();
         imageGT = gd.getNextChoice();
         pixelSizeGT = gd.getNextNumber();
+        doNMolecules = gd.getNextBoolean();
+        background = gd.getNextNumber();
+
+        pixelSizeCamera = gd.getNextNumber();
+        gain = gd.getNextNumber();
+        readNoise = gd.getNextNumber();
+        sensitivity = gd.getNextNumber();
+        base = gd.getNextNumber();
 
         setPrefs("fluorophore", fluorophore);
         setPrefs("buffer", buffer);
         setPrefs("experimentLength", experimentLength);
         setPrefs("frameDuration", frameDuration);
         setPrefs("pixelSizeGT", pixelSizeGT);
+        setPrefs("doNMolecules", doNMolecules);
+        setPrefs("background", background);
+
+        setPrefs("pixelSizeCamera", pixelSizeCamera);
+        setPrefs("gain", gain);
+        setPrefs("readNoise", readNoise);
+        setPrefs("sensitivity", sensitivity);
+        setPrefs("base", base);
 
         return true;
     }
@@ -115,7 +148,7 @@ public class DutyCycleSimulator_ extends _Dialog_{
             FloatProcessor fpGT = impGT.getProcessor().convertToFloatProcessor();
             w = impGT.getWidth();
             h = impGT.getHeight();
-            ArrayList<int[]> locs = getParticles(fpGT);
+            ArrayList<int[]> locs = getParticles(fpGT, doNMolecules);
             xPos = locs.get(0);
             yPos = locs.get(1);
         }
@@ -229,8 +262,8 @@ public class DutyCycleSimulator_ extends _Dialog_{
         }
 
 
-        double fwhm = wavelength/2.8;
-        double sigma = (fwhm/2.35482)/10;
+        double fwhm = wavelength/2.8; //lambda over 2NA
+        double sigma = (fwhm/2.35482)/pixelSizeGT;
 
         int w_, h_;
 
@@ -239,11 +272,14 @@ public class DutyCycleSimulator_ extends _Dialog_{
             h_ = 50;
         }
         else{
-            w_ = (int) ((w*pixelSizeGT)/100);
-            h_ = (int) ((h*pixelSizeGT)/100);
+            w_ = (int) ((w*pixelSizeGT)/pixelSizeCamera);
+            h_ = (int) ((h*pixelSizeGT)/pixelSizeCamera);
         }
 
         ImageStack ims = new ImageStack(w_, h_, nFrames);
+        ImageStack ims_nn = new ImageStack(w_, h_, nFrames);
+        ImageStack ims_blinks = new ImageStack(w, h, nFrames);
+        Binner binner = new Binner();
 
         for(int f=0; f<nFrames; f++){
             IJ.showStatus("rendering frame "+(f+1)+"/"+nFrames);
@@ -253,27 +289,65 @@ public class DutyCycleSimulator_ extends _Dialog_{
                 int x = xPos[n];
                 int y = yPos[n];
                 float v = switchingLists.get(n)[f];
-                // poisson noise
-                if(v>0){
-                    v = (float) rnd.nextPoisson(v);
-                }
                 fp.setf(x, y, v);
             }
 
+            // add background fluorescence
+            fp.add(background);
+
+            // diffract through microscope optics
             fp.blurGaussian(sigma);
+
+            // hit binned detector array
+            fp = binner.shrink(fp, (int) (pixelSizeCamera/pixelSizeGT), (int) (pixelSizeCamera/pixelSizeGT), SUM).convertToFloatProcessor();
+            //fp = fp.resize(w_, h_).convertToFloatProcessor();
+
+            ims_nn.setProcessor(fp.duplicate(), f+1);
+
+            // quantum efficiency
+            double qe = 1;
+            fp.multiply(qe);
+
+            // emccd emission of thermal and clock-induced charge
+            double c = 0;
+            fp.add(c);
+
+            // poisson noise - probability of photoelectron emission (joint from p(nphotons hit detector) and p(conversion after qe)).
+            for(int p=0; p<fp.getPixelCount(); p++){
+                float v = fp.getf(p);
+                if(v>0) fp.setf(p, (float) rnd.nextPoisson(v));
+            }
             // assume QE = 1 => 1 photon = 1 electron
-            // EMCCD gain = 100
-            fp.multiply(100);
-            // downsample
-            fp = fp.resize(w_, h_).convertToFloatProcessor();
-            // add read noise std 50
-            float[] pixels = (float[]) fp.getPixels();
-            for(int i=0; i<pixels.length; i++) pixels[i] = (float) Math.max(0, pixels[i] + random.nextGaussian()*50);
-            fp.setPixels(pixels);
+            // EMCCD gain, gamma function
+            double g = gain;
+            for(int p=0; p<fp.getPixelCount(); p++){
+                float v = fp.getf(p);
+                if(v==0) continue;
+                fp.setf(p, (float) new GammaDistribution(v, g).sample()); //TODO: maybe overkill.
+            }
+            //fp.multiply(g);
+
+            // add read noise
+            double r = readNoise;
+            for(int p=0; p<fp.getPixelCount(); p++){
+                float v = fp.getf(p);
+                fp.setf(p, (float) (v+random.nextGaussian()*r)); //TODO: notation in stochastic model paper says * not +
+            }
+
+//            float[] pixels = (float[]) fp.getPixels();
+//            for(int i=0; i<pixels.length; i++) pixels[i] = (float) Math.max(0, pixels[i] + random.nextGaussian()*50);
+//            fp.setPixels(pixels);
+
             // analog to digital conversion
-            fp.add(100); //base of 100
+            double f_AD = sensitivity;
+            fp.multiply(1/f_AD);
+            //fp.add(100); //base of 100
             // EM noise sqrt2
-            fp.multiply(1.4);
+            //fp.multiply(1.4); TODO: don't need this if using gamma model, i think
+
+            //add base
+            double b_AD = base;
+            fp.add(b_AD);
 
             ims.setProcessor(fp, f+1);
         }
@@ -283,8 +357,8 @@ public class DutyCycleSimulator_ extends _Dialog_{
         ImagePlus impBlinking = new ImagePlus(fluorophore+" in "+buffer, ims);
         Calibration calibration = new Calibration();
         calibration.setUnit("micron");
-        calibration.pixelWidth = 0.1;
-        calibration.pixelHeight = 0.1;
+        calibration.pixelWidth = pixelSizeCamera/1000;
+        calibration.pixelHeight = pixelSizeCamera/1000;
         calibration.setTimeUnit("ms");
         calibration.frameInterval = frameDuration;
         impBlinking.setCalibration(calibration);
@@ -294,12 +368,20 @@ public class DutyCycleSimulator_ extends _Dialog_{
 
     }
 
-    ArrayList<int[]> getParticles(FloatProcessor fp){
+    ArrayList<int[]> getParticles(FloatProcessor fp, boolean doNMolecules){
         ArrayList<Integer> xLocs = new ArrayList<Integer>();
         ArrayList<Integer> yLocs = new ArrayList<Integer>();
         for(int y=0; y<h; y++){
             for(int x=0; x<w; x++){
-                if(fp.getf(x,y)>0){
+                float v = fp.getf(x, y);
+                if(v==0) continue;
+                if(doNMolecules){
+                    for(int n=0; n<v; n++){
+                        xLocs.add(x);
+                        yLocs.add(y);
+                    }
+                }
+                else{
                     xLocs.add(x);
                     yLocs.add(y);
                 }
@@ -407,4 +489,27 @@ public class DutyCycleSimulator_ extends _Dialog_{
             };
 
     String[] buffers = new String[] {"MEA", "BME"};
+
+    public static void main(String[] args) throws Exception {
+        // set the plugins.dir property to make the plugin appear in the Plugins menu
+        // see: https://stackoverflow.com/a/7060464/1207769
+        Class<?> clazz = DutyCycleSimulator_.class;
+        java.net.URL url = clazz.getProtectionDomain().getCodeSource().getLocation();
+        java.io.File file = new java.io.File(url.toURI());
+        System.setProperty("plugins.dir", file.getAbsolutePath());
+
+        // start ImageJ
+        new ImageJ();
+
+        // run the plugin
+        FloatProcessor fp = new FloatProcessor(500,500);
+        for(int i=200; i<=300; i++) fp.setf(i, i, 1.0f);
+        new ImagePlus("test", fp).show();
+        IJ.runPlugIn(clazz.getName(), "");
+    }
+
+    @Override
+    public boolean dialogItemChanged(GenericDialog gd, AWTEvent awtEvent) {
+        return true;
+    }
 }
